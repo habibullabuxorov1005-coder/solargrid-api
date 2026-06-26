@@ -6,99 +6,218 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Virtual inverter
-const inverter = {
-  username: "admin",
-  password: "123456",
-  plantId: "SG-1001",
-  plantName: "SolarGrid Demo Plant",
-  capacity: "10kW",
-  location: "Uzbekistan"
+let stationConfig = {
+  name: "SolarGrid Demo Plant",
+  api_type: "growatt",
+  rows: 6,
+  panelsPerRow: 8,
+  capacity_kw: 24,
+  growatt: {
+    username: "admin",
+    password: "123456",
+    plant_id: "SG-1001"
+  }
 };
 
-// API info
 app.get("/", (req, res) => {
   res.json({
-    name: "SolarGrid Virtual Inverter API",
+    success: true,
+    api: "SolarGrid Virtual Inverter",
     status: "online"
   });
 });
 
-// Login
-app.post("/login", (req, res) => {
+app.post("/api/station/test-connection", (req, res) => {
 
-  const { username, password, plantId } = req.body;
-
-  if (
-    username === inverter.username &&
-    password === inverter.password &&
-    plantId === inverter.plantId
-  ) {
-
-    return res.json({
-      success: true,
-      message: "Login successful",
-      token: "SOLARGRID-DEMO-TOKEN"
-    });
-
-  }
-
-  res.status(401).json({
-    success: false,
-    message: "Username, Password yoki Plant ID noto'g'ri"
+  return res.json({
+    success: true,
+    message: "Growatt ga muvaffaqiyatli ulandi",
+    source: "virtual-growatt"
   });
 
 });
 
-// Plant
-app.get("/plant", (req, res) => {
+app.post("/api/station/config", (req, res) => {
+
+  stationConfig = {
+    ...stationConfig,
+    ...req.body
+  };
 
   res.json({
-    plantId: inverter.plantId,
-    plantName: inverter.plantName,
-    capacity: inverter.capacity,
-    location: inverter.location
+    success: true,
+    message: "Config saqlandi"
   });
 
 });
 
-// Realtime
-app.get("/realtime", (req, res) => {
+function generateDashboard() {
 
   const hour = new Date().getHours();
 
   let power = 0;
 
-  if(hour>=6 && hour<=19){
-      power = Math.sin(((hour-6)/13)*Math.PI)*10;
+  if (hour >= 6 && hour <= 19) {
+    power = Math.sin(((hour - 6) / 13) * Math.PI) * stationConfig.capacity_kw;
   }
 
   power = Number(power.toFixed(2));
 
+  const panels = [];
+
+  let normal = 0;
+  let problem = 0;
+
+  for (let r = 0; r < stationConfig.rows; r++) {
+
+    for (let c = 0; c < stationConfig.panelsPerRow; c++) {
+
+      let status = "normal";
+
+      if (Math.random() < 0.03) status = "dirty";
+      if (Math.random() < 0.01) status = "fault";
+
+      if (status === "normal") normal++;
+      else problem++;
+
+      panels.push({
+        id: `${String.fromCharCode(65 + r)}${c + 1}`,
+        row: String.fromCharCode(65 + r),
+        col: c + 1,
+        power_w: Math.round((power * 1000) / (stationConfig.rows * stationConfig.panelsPerRow)),
+        voltage: 229,
+        current: 5.2,
+        temperature: 38,
+        efficiency: 96,
+        status,
+        issue: status === "dirty"
+          ? "Changlangan"
+          : status === "fault"
+          ? "Nosoz"
+          : null
+      });
+
+    }
+
+  }
+
+  return {
+
+    success: true,
+
+    station: {
+      name: stationConfig.name
+    },
+
+    summary: {
+      total_power_kw: power,
+      capacity_kw: stationConfig.capacity_kw,
+      efficiency_pct: Math.round((power / stationConfig.capacity_kw) * 100),
+      total_panels: panels.length,
+      normal_panels: normal,
+      problem_panels: problem,
+      alerts_count: problem,
+      today_kwh: Number((power * 5).toFixed(1))
+    },
+
+    panels,
+
+    weather: {
+      temp: 34,
+      description: "Quyoshli",
+      clouds: 10,
+      wind_speed: 3,
+      solar_radiation: 850,
+      uv_index: 8,
+      icon: "01d",
+      is_day: true,
+      sunrise: "05:10",
+      sunset: "19:48",
+      forecast: [
+        { day: "Ertaga", temp: 35, production_estimate: 96 },
+        { day: "Indin", temp: 33, production_estimate: 90 },
+        { day: "3-kun", temp: 30, production_estimate: 74 }
+      ]
+    },
+
+    alerts: panels
+      .filter(p => p.status !== "normal")
+      .map(p => ({
+        severity: p.status === "fault" ? "critical" : "warning",
+        type: p.status,
+        title: `Panel ${p.id}`,
+        description: p.issue,
+        action: "Tekshirish"
+      }))
+
+  };
+
+}
+
+app.get("/api/dashboard", (req, res) => {
+
+  res.json(generateDashboard());
+
+});
+
+// Realtime API
+app.get("/realtime", (req, res) => {
+
+  const dashboard = generateDashboard();
+
   res.json({
-
-      status:"Online",
-
-      power,
-
-      todayEnergy:Number((power*5).toFixed(1)),
-
-      totalEnergy:15482+Math.floor(Math.random()*300),
-
-      voltage:220+Math.floor(Math.random()*10),
-
-      temperature:35+Math.floor(Math.random()*10),
-
-      frequency:50,
-
-      inverter:"SolarGrid Virtual",
-
-      plantId:inverter.plantId
-
+    status: "Online",
+    power: dashboard.summary.total_power_kw,
+    todayEnergy: dashboard.summary.today_kwh,
+    totalEnergy: 15482 + Math.floor(Math.random() * 300),
+    voltage: 229,
+    temperature: 38,
+    frequency: 50,
+    inverter: "SolarGrid Virtual",
+    plantId: stationConfig.growatt.plant_id
   });
 
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("API running");
+// Plant API
+app.get("/plant", (req, res) => {
+
+  res.json({
+    plantId: stationConfig.growatt.plant_id,
+    plantName: stationConfig.name,
+    capacity: stationConfig.capacity_kw + "kW",
+    location: "Uzbekistan"
+  });
+
+});
+
+// Login API
+app.post("/login", (req, res) => {
+
+  const { username, password, plantId } = req.body;
+
+  if (
+    username === stationConfig.growatt.username &&
+    password === stationConfig.growatt.password &&
+    plantId === stationConfig.growatt.plant_id
+  ) {
+
+    return res.json({
+      success: true,
+      token: "SOLARGRID-DEMO-TOKEN"
+    });
+
+  }
+
+  return res.status(401).json({
+    success: false,
+    message: "Login xato"
+  });
+
+});
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log("SolarGrid Virtual API running on port " + PORT);
 });
